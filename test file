@@ -1,0 +1,270 @@
+Got it — I’ll paste each file so you can copy them into your repo in one go. These include the Playwright and k6 scripts, README, two GitHub Actions workflows, and the systemd unit/timer.
+
+Paste each file into the matching path in your repository (or create them via the GitHub web editor). If you want, I can also produce a single script to create all files locally — tell me which you prefer.
+
+```javascript name=synthetic-transaction-playwright.js
+// Usage: BASE_URL=https://your-site.com node synthetic-transaction-playwright.js
+// Install: npm install playwright
+const { chromium } = require('playwright');
+
+const BASE_URL = process.env.BASE_URL || 'https://example.com';
+const SEARCH_TERM = process.env.SEARCH_TERM || 'test product';
+
+function randDelay(min=200, max=1200) {
+  return min + Math.floor(Math.random() * (max - min));
+}
+
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    userAgent: 'SyntheticBot/1.0 (+https://example.com/synthetic)',
+    viewport: { width: 1280, height: 800 },
+  });
+  const page = await context.newPage();
+  const started = Date.now();
+  try {
+    console.log(JSON.stringify({ event: 'start', url: BASE_URL }));
+
+    // Visit homepage
+    await page.goto(BASE_URL, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(randDelay());
+
+    // Search (adjust selector to your app)
+    const searchSelector = 'input[name="q"], input[type="search"], #search';
+    if (await page.$(searchSelector)) {
+      await page.click(searchSelector);
+      await page.fill(searchSelector, SEARCH_TERM);
+      await page.keyboard.press('Enter');
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(randDelay());
+    }
+
+    // Click first product (adjust selector)
+    const productSelector = '.product, .item, .listing .card';
+    const firstProduct = await page.$(productSelector);
+    if (firstProduct) {
+      await firstProduct.click();
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(randDelay());
+    }
+
+    // Add to cart (adjust selector)
+    const addToCartSelector = 'button.add-to-cart, button[name="add"], #add-to-cart';
+    if (await page.$(addToCartSelector)) {
+      await page.click(addToCartSelector);
+      await page.waitForTimeout(randDelay(500, 1500));
+    }
+
+    // Go to cart (optional)
+    const cartSelector = 'a[href*="/cart"], a[aria-label="Cart"], #cart';
+    if (await page.$(cartSelector)) {
+      await page.click(cartSelector);
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(randDelay());
+    }
+
+    // Capture a screenshot for monitoring retention
+    const screenshotPath = `synthetic-screenshot-${Date.now()}.png`;
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+    const duration = Date.now() - started;
+    console.log(JSON.stringify({ event: 'complete', success: true, duration_ms: duration, screenshot: screenshotPath }));
+  } catch (err) {
+    const duration = Date.now() - started;
+    console.error(JSON.stringify({ event: 'error', message: err.message, duration_ms: duration }));
+    process.exitCode = 2;
+  } finally {
+    await browser.close();
+  }
+})();
+```
+
+```javascript name=synthetic-transaction-k6.js
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 10 },   // ramp to 10 VUs
+    { duration: '1m', target: 10 },    // stay
+    { duration: '30s', target: 0 },    // ramp down
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<500'],  // 95% requests under 500ms
+    'http_req_failed': ['rate<0.01'],
+  },
+};
+
+const BASE_URL = __ENV.BASE_URL || 'https://example.com';
+
+function randomPause() {
+  // small randomized pause to avoid deterministic bursts
+  sleep(0.5 + Math.random() * 1.5);
+}
+
+export default function () {
+  // 1) Visit homepage
+  let res = http.get(`${BASE_URL}/`);
+  check(res, { 'home status 200': r => r.status === 200 });
+  randomPause();
+
+  // 2) Search (if search endpoint exists)
+  const q = encodeURIComponent(__ENV.SEARCH_TERM || 'test product');
+  res = http.get(`${BASE_URL}/search?q=${q}`);
+  check(res, { 'search status 200': r => r.status === 200 });
+  randomPause();
+
+  // 3) Get product page (replace with actual product path or API)
+  res = http.get(`${BASE_URL}/product/example-product`);
+  check(res, { 'product status 200': r => r.status === 200 });
+  randomPause();
+
+  // 4) Add to cart (POST) — replace endpoint/payload with your API
+  res = http.post(`${BASE_URL}/cart/add`, JSON.stringify({ productId: 'example-product', qty: 1 }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+  check(res, { 'add-to-cart status 200': r => r.status === 200 || r.status === 201 });
+  randomPause();
+}
+```
+
+```text name=README.md
+# Synthetic Traffic Scripts
+
+Contents:
+- synthetic-transaction-playwright.js — headless browser synthetic transaction (Playwright)
+- synthetic-transaction-k6.js — HTTP-level synthetic transaction (k6)
+
+Important: Only run these against sites you own or have explicit permission to test.
+
+## Quick local setup
+
+Prerequisites:
+- git installed
+- Node.js (for Playwright)
+- k6 (for load tests) or Docker
+
+1) Playwright (local)
+
+```bash
+# create folder and install
+mkdir synthetic && cd synthetic
+npm init -y
+npm install playwright
+# install browsers and deps
+npx playwright install --with-deps
+# run
+BASE_URL=https://your-site.com SEARCH_TERM="my query" node synthetic-transaction-playwright.js
+```
+
+2) k6 (local)
+
+Install k6: https://k6.io/docs/getting-started/installation/
+
+Run:
+
+```bash
+BASE_URL=https://your-site.com SEARCH_TERM="my query" k6 run synthetic-transaction-k6.js
+```
+
+## Scheduling
+
+- Cron example (every 5 minutes) for Playwright:
+
+```cron
+*/5 * * * * cd /path/to/repo && BASE_URL=https://your-site.com /usr/bin/node synthetic-transaction-playwright.js >> /var/log/synthetic.log 2>&1
+```
+
+- Systemd unit/timer examples are included in the `systemd/` folder.
+
+## Safety & Best Practices
+- Never run high-volume k6 tests against production without ops approval.
+- Use dedicated test accounts for authenticated journeys.
+- Monitor target system metrics and abort tests if error rates rise.
+```
+
+```yaml name=.github/workflows/run-playwright.yml
+name: Synthetic Playwright Transaction
+on:
+  schedule:
+    # every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-playwright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm ci || npm install
+      - name: Run Playwright synthetic transaction
+        env:
+          BASE_URL: ${{ secrets.SYNTHETIC_BASE_URL }}
+          SEARCH_TERM: 'monitor test'
+        run: node synthetic-transaction-playwright.js || echo "Script exited with $?"
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-screenshot
+          path: synthetic-screenshot-*.png
+```
+
+```yaml name=.github/workflows/run-k6.yml
+name: Synthetic k6 Transaction
+on:
+  schedule:
+    - cron: '0 */1 * * *' # every hour
+  workflow_dispatch:
+
+jobs:
+  run-k6:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run k6 using Docker
+        env:
+          BASE_URL: ${{ secrets.SYNTHETIC_BASE_URL }}
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/scripts" -w /scripts -e BASE_URL="${BASE_URL}" loadimpact/k6 run synthetic-transaction-k6.js || true
+      - name: Upload raw k6 output (if produced)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-output
+          path: k6-summary-*.txt || synthetic-k6-results.txt || .
+```
+
+```ini name=systemd/system/synthetic-playwright.service
+[Unit]
+Description=Run synthetic Playwright transaction
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/synthetic
+Environment=BASE_URL=https://your-site.example
+ExecStart=/usr/bin/node /home/ubuntu/synthetic/synthetic-transaction-playwright.js
+```
+
+```ini name=systemd/system/synthetic-playwright.timer
+[Unit]
+Description=Run synthetic Playwright every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Next steps
+- Copy each file into the same paths in ChewyBB80-0/Https-test (create directories as needed).
+- Commit on branch synthetic-traffic and push, or create a PR from synthetic-traffic into your default branch.
+- Add Actions secret SYNTHETIC_BASE_URL in Settings → Secrets to use the scheduled workflows.
+- If you want, I can now produce a single-shell script that creates all files and pushes the branch (run it locally). Do you want that?
