@@ -1,8 +1,14 @@
 name: Synthetic k6 Transaction
 
 on:
-  schedule:
-    - cron: '0 */1 * * *'
+  # Disabled 2026-08-20. These schedules first reached GitHub in commit
+  # 1b7287b and immediately began firing synthetic traffic at the live
+  # storefront (k6 hourly, Playwright every 5 min = 288 runs/day). That
+  # pollutes the Shopify and Google Analytics data the Search campaign is
+  # about to be judged on, and it fails anyway unless the repo secret
+  # SYNTHETIC_BASE_URL is set. Re-enable deliberately, not by accident.
+  # schedule:
+  #   - cron: '0 */1 * * *'
   workflow_dispatch:
 
 jobs:
