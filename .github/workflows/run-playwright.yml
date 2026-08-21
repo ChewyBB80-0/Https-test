@@ -1,0 +1,33 @@
+name: Synthetic Playwright Transaction
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-playwright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Playwright synthetic transaction
+        env:
+          BASE_URL: ${{ secrets.SYNTHETIC_BASE_URL }}
+          SEARCH_TERM: 'synthetic traffic'
+        run: node synthetic-transaction-playwright.js
+
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-screenshot
+          path: synthetic-traffic-*.png

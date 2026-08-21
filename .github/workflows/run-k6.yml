@@ -1,0 +1,24 @@
+name: Synthetic k6 Transaction
+
+on:
+  schedule:
+    - cron: '0 */1 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-k6:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run synthetic k6 test
+        env:
+          BASE_URL: ${{ secrets.SYNTHETIC_BASE_URL }}
+          SEARCH_TERM: 'synthetic traffic'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/scripts" \
+            -w /scripts \
+            -e BASE_URL="${BASE_URL}" \
+            -e SEARCH_TERM="${SEARCH_TERM}" \
+            grafana/k6 run synthetic-transaction-k6.js

@@ -1,0 +1,16 @@
+[Unit]
+Description=Run synthetic browser web traffic transaction
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/https-test
+Environment=BASE_URL=https://your-site.example
+Environment=SEARCH_TERM=synthetic traffic
+ExecStart=/usr/bin/node /opt/https-test/synthetic-transaction-playwright.js
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
